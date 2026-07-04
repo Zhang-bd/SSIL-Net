@@ -33,8 +33,8 @@ class ChikuseiDataset(Dataset):
         self.type = type
         self.aug = aug
         # Generate samples and labels
-        # if type != 'test':
-        #     self.hrhsi, self.lrhsi, self.hrmsi, self.pan = self.getData()
+        if type != 'test':
+            self.hrhsi, self.lrhsi, self.hrmsi, self.pan = self.getData()
 
         if self.type == 'train':
             self.hsi_data, self.msi_data, self.pan_data, self.label = self.generateTrain()
@@ -44,12 +44,12 @@ class ChikuseiDataset(Dataset):
 
     def getData(self):
         # srf = sio.loadmat('/public/home/s-zhangbd/code/Data/Chikusei/chikusei_128_4.mat')['R']
-        srf = np.load('/public/home/s-zhangbd/code/Data/H_M_P/srf/chi_128_4_norm.npy')
-        psf_1 = np.load('/public/home/s-zhangbd/code/Data/H_M_P/psf/psf_8_2.npy')
+        srf = np.load('/home/s-zhangbd/code/Data/H_M_P/srf/chi_128_4_norm.npy')
+        psf_1 = np.load('/home/s-zhangbd/code/Data/H_M_P/psf/psf_8_2.npy')
         # mat_save_path = '/public/home/s-zhangbd/code/Data/Chikusei/chikusei_128_4.mat'
         #mat_save_path = r'/public/home/s-zhangbd/code/Data/Chikusei/HMP/Chikusei01.mat'
         #hrhsi = np.array(File(mat_save_path)['chikusei']).transpose([1, 2, 0])
-        hrhsi = np.load(r'/public/home/s-zhangbd/code/Data/Chikusei/HMP/Chikusei01.npy')
+        hrhsi = np.load(r'/home/s-zhangbd/code/Data/Chikusei/HMP/Chikusei01.npy')
         #hrhsi /= hrhsi.max()
         hrhsi[300:812, 300:812] = hrhsi[812:1324, 812:1324]
         hrhsi[300:812, 1000:1512] = hrhsi[812:1324, 1512:2024]
@@ -77,72 +77,62 @@ class ChikuseiDataset(Dataset):
         return hrhsi, lrhsi, hrmsi, pan
 
     def generateTrain(self):
-        # patch_h, patch_w = 6, 6
-        # rows, cols = self.lrhsi.shape[0], self.lrhsi.shape[1]
-        # num = len(list(range(0, rows - patch_h, self.h_stride))) * len(
-        #     list(range(0, cols - patch_w, self.w_stride)))
-        # # print(num)
-        # label_patch = np.zeros((num, patch_h * 16, patch_w * 16, self.hsi_channel), dtype=np.float32)
-        # hrmsi_patch = np.zeros((num, patch_h * 4, patch_w * 4, self.msi_channel), dtype=np.float32)
-        # lrhsi_patch = np.zeros((num, patch_h, patch_w, self.hsi_channel), dtype=np.float32)
-        # pan_patch = np.zeros((num, patch_h * 16, patch_w * 16, 1), dtype=np.float32)
-        # count = 0
+        patch_h, patch_w = 6, 6
+        rows, cols = self.lrhsi.shape[0], self.lrhsi.shape[1]
+        num = len(list(range(0, rows - patch_h, self.h_stride))) * len(
+            list(range(0, cols - patch_w, self.w_stride)))
+        # print(num)
+        label_patch = np.zeros((num, patch_h * 16, patch_w * 16, self.hsi_channel), dtype=np.float32)
+        hrmsi_patch = np.zeros((num, patch_h * 4, patch_w * 4, self.msi_channel), dtype=np.float32)
+        lrhsi_patch = np.zeros((num, patch_h, patch_w, self.hsi_channel), dtype=np.float32)
+        pan_patch = np.zeros((num, patch_h * 16, patch_w * 16, 1), dtype=np.float32)
+        count = 0
 
-        # # hrhsi, lrhsi, hrmsi = self.getData()
-        # hrhsi = self.hrhsi
-        # lrhsi = self.lrhsi
-        # hrmsi = self.hrmsi
-        # pan = self.pan
-        # # Data type conversion
-        # if hrhsi.dtype != np.float32: hrhsi = hrhsi.astype(np.float32)
-        # if lrhsi.dtype != np.float32: lrhsi = lrhsi.astype(np.float32)
-        # if hrmsi.dtype != np.float32: hrmsi = hrmsi.astype(np.float32)
-        # if pan.dtype != np.float32: pan = pan.astype(np.float32)
+        # hrhsi, lrhsi, hrmsi = self.getData()
+        hrhsi = self.hrhsi
+        lrhsi = self.lrhsi
+        hrmsi = self.hrmsi
+        pan = self.pan
+        # Data type conversion
+        if hrhsi.dtype != np.float32: hrhsi = hrhsi.astype(np.float32)
+        if lrhsi.dtype != np.float32: lrhsi = lrhsi.astype(np.float32)
+        if hrmsi.dtype != np.float32: hrmsi = hrmsi.astype(np.float32)
+        if pan.dtype != np.float32: pan = pan.astype(np.float32)
 
-        # for x in range(0, rows - patch_h, self.h_stride):
-        #     for y in range(0, cols - patch_w, self.w_stride):
-        #         label_patch[count] = hrhsi[x * 16:(x + patch_h) * 16, y * 16:(y + patch_w) * 16, :]
-        #         hrmsi_patch[count] = hrmsi[x * 4:(x + patch_h) * 4, y * 4:(y + patch_w) * 4, :]
-        #         lrhsi_patch[count] = lrhsi[x:x + patch_h, y:y + patch_w, :]
-        #         pan_patch[count] = pan[x * 16:(x + patch_h) * 16, y * 16:(y + patch_w) * 16, :]
-        #         count += 1
-        # sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/train/train_data.mat",{"hsi":lrhsi_patch,"msi":hrmsi_patch,"pan":pan_patch,"gt":label_patch})
-        lrhsi_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/train/train_data.mat")['hsi']
-        hrmsi_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/train/train_data.mat")['msi']
-        pan_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/train/train_data.mat")['pan']
-        label_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/train/train_data.mat")['gt']
+        for x in range(0, rows - patch_h, self.h_stride):
+            for y in range(0, cols - patch_w, self.w_stride):
+                label_patch[count] = hrhsi[x * 16:(x + patch_h) * 16, y * 16:(y + patch_w) * 16, :]
+                hrmsi_patch[count] = hrmsi[x * 4:(x + patch_h) * 4, y * 4:(y + patch_w) * 4, :]
+                lrhsi_patch[count] = lrhsi[x:x + patch_h, y:y + patch_w, :]
+                pan_patch[count] = pan[x * 16:(x + patch_h) * 16, y * 16:(y + patch_w) * 16, :]
+                count += 1
         return lrhsi_patch, hrmsi_patch, pan_patch, label_patch
 
     def generateTest(self):
-        # test = np.load(r'/public/home/s-zhangbd/code/Data/Chikusei/HMP/test.npy')
-        # srf = np.load('/public/home/s-zhangbd/code/Data/H_M_P/srf/chi_128_4_norm.npy')
-        # psf_1 = np.load('/public/home/s-zhangbd/code/Data/H_M_P/psf/psf_8_2.npy')
-        # num = test.shape[0]
-        # patch_h,patch_w = 16,16
-        # label_patch = np.zeros((num, patch_h * 16, patch_w * 16, self.hsi_channel), dtype=np.float32)
-        # hrmsi_patch = np.zeros((num, patch_h * 4, patch_w * 4, self.msi_channel), dtype=np.float32)
-        # lrhsi_patch = np.zeros((num, patch_h, patch_w, self.hsi_channel), dtype=np.float32)
-        # pan_patch = np.zeros((num, patch_h * 16, patch_w * 16, 1), dtype=np.float32)
-        # for i in range(num):
-        #     tt = test[i,:,:,:]
-        #     pan_patch[i,:,:,:]  = np.mean(tt, axis=2, keepdims=True)
-        #     hrmsi = tt @ srf
-        #     hrmsi_patch[i,:,:,:] = Gaussian_downsample(hrmsi, psf_1, 4)
-        #     lrhsi_patch[i,:,:,:] = Gaussian_downsample(tt, psf_1, 16)
-        #     label_patch[i,:,:,:] = tt
-
-        lrhsi_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/test/test_data.mat")['hsi']
-        hrmsi_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/test/test_data.mat")['msi']
-        pan_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/test/test_data.mat")['pan']
-        label_patch = sio.loadmat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/test/test_data.mat")['gt']
-
+        test = np.load(r'/home/s-zhangbd/code/Data/Chikusei/HMP/test.npy')
+        srf = np.load('/home/s-zhangbd/code/Data/H_M_P/srf/chi_128_4_norm.npy')
+        psf_1 = np.load('/home/s-zhangbd/code/Data/H_M_P/psf/psf_8_2.npy')
+        num = test.shape[0]
+        patch_h,patch_w = 16,16
+        label_patch = np.zeros((num, patch_h * 16, patch_w * 16, self.hsi_channel), dtype=np.float32)
+        hrmsi_patch = np.zeros((num, patch_h * 4, patch_w * 4, self.msi_channel), dtype=np.float32)
+        lrhsi_patch = np.zeros((num, patch_h, patch_w, self.hsi_channel), dtype=np.float32)
+        pan_patch = np.zeros((num, patch_h * 16, patch_w * 16, 1), dtype=np.float32)
+        for i in range(num):
+            tt = test[i,:,:,:]
+            pan_patch[i,:,:,:]  = np.mean(tt, axis=2, keepdims=True)
+            hrmsi = tt @ srf
+            hrmsi_patch[i,:,:,:] = Gaussian_downsample(hrmsi, psf_1, 4)
+            lrhsi_patch[i,:,:,:] = Gaussian_downsample(tt, psf_1, 16)
+            label_patch[i,:,:,:] = tt
+    
 
         # Data type conversion
         if label_patch.dtype != np.float32: label_patch = label_patch.astype(np.float32)
         if hrmsi_patch.dtype != np.float32: hrmsi_patch = hrmsi_patch.astype(np.float32)
         if lrhsi_patch.dtype != np.float32: lrhsi_patch = lrhsi_patch.astype(np.float32)
         if pan_patch.dtype != np.float32: pan_patch = pan_patch.astype(np.float32)
-        # sio.savemat("/public/home/s-zhangbd/code/Data/H_M_P/Chi2/test/test_data.mat",{"hsi":lrhsi_patch, "msi":hrmsi_patch, "pan":pan_patch, "gt":label_patch})
+
         return lrhsi_patch, hrmsi_patch, pan_patch, label_patch
 
     def __getitem__(self, index):
@@ -186,9 +176,3 @@ class ChikuseiDataset(Dataset):
 
     def __len__(self):
         return self.label.shape[0]
-
-
-
-# if __name__ == "__main__":
-#     # train_data = ChikuseiDataset(h_stride=6,w_stride=6,type='train',aug=False)
-#     test_data = ChikuseiDataset(type='test',aug=False)

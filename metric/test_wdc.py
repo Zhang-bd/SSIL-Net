@@ -1,339 +1,295 @@
+# -*- coding: utf-8 -*-
+"""
+@Author  :   zhwzhong
+@License :   (C) Copyright 2013-2018, hit
+@Contact :   zhwzhong.hit@gmail.com
+@Software:   PyCharm
+@File    :   metrics.py
+@Time    :   2019/12/4 17:35
+@Desc    :
+"""
 import numpy as np
-import cv2
+from scipy.signal import convolve2d
+from skimage.measure import compare_psnr, compare_ssim
 
-
-########################################################
-# Gaussian degradation (approximate MTF)
-########################################################
-def mtf_downsample(img, scale, sigma=1.7):
+def compare_ergas(x_true, x_pred, ratio):
     """
-    img : (H,W)
+    Calculate ERGAS, ERGAS offers a global indication of the quality of fused image.The ideal value is 0.
+    :param x_true:
+    :param x_pred:
+    :param ratio: 上采样系数
+    :return:
     """
-    img = cv2.GaussianBlur(img, (0, 0), sigma)
-    h, w = img.shape
-    return cv2.resize(
-        img,
-        (w // scale, h // scale),
-        interpolation=cv2.INTER_CUBIC,
-    )
+    x_true, x_pred = img_2d_mat(x_true=x_true, x_pred=x_pred)
+    sum_ergas = 0
+    for i in range(x_true.shape[0]):
+        vec_x = x_true[i]
+        vec_y = x_pred[i]
+        err = vec_x - vec_y
+        r_mse = np.mean(np.power(err, 2))
+        tmp = r_mse / (np.mean(vec_x)**2)
+        sum_ergas += tmp
+    return (100 / ratio) * np.sqrt(sum_ergas / x_true.shape[0])
 
 
-########################################################
-# Universal Image Quality Index (UIQI)
-########################################################
-def qindex(img1, img2, block_size=8):
-    img1 = img1.astype(np.float64)
-    img2 = img2.astype(np.float64)
-
-    h, w = img1.shape
-
-    if min(h, w) < block_size:
-        block_size = min(h, w)
-
-    window = np.ones((block_size, block_size), dtype=np.float64)
-    window /= window.size
-
-    mu1 = cv2.filter2D(img1, -1, window, borderType=cv2.BORDER_REFLECT)
-    mu2 = cv2.filter2D(img2, -1, window, borderType=cv2.BORDER_REFLECT)
-
-    sigma1 = cv2.filter2D(img1 ** 2, -1, window,
-                          borderType=cv2.BORDER_REFLECT) - mu1 ** 2
-    sigma2 = cv2.filter2D(img2 ** 2, -1, window,
-                          borderType=cv2.BORDER_REFLECT) - mu2 ** 2
-
-    sigma12 = cv2.filter2D(
-        img1 * img2,
-        -1,
-        window,
-        borderType=cv2.BORDER_REFLECT,
-    ) - mu1 * mu2
-
-    eps = 1e-12
-
-    q = ((2 * mu1 * mu2 + eps) *
-         (2 * sigma12 + eps)) / \
-        ((mu1 ** 2 + mu2 ** 2 + eps) *
-         (sigma1 + sigma2 + eps))
-
-    return np.mean(q)
-
-
-########################################################
-# D_lambda
-########################################################
-def D_lambda(fused, lr_hsi, scale, p=1):
+def compare_sam(x_true, x_pred):
     """
-    fused : (C,H,W)
-    lr_hsi: (C,h,w)
+    :param x_true: 高光谱图像：格式：(H, W, C)
+    :param x_pred: 高光谱图像：格式：(H, W, C)
+    :return: 计算原始高光谱数据与重构高光谱数据的光谱角相似度
     """
-
-    C = fused.shape[0]
-
-    fused_lr = np.stack([
-        mtf_downsample(band, scale)
-        for band in fused
-    ])
-
-    diff = []
-
-    for i in range(C):
-
-        for j in range(i + 1, C):
-
-            q_f = qindex(fused_lr[i], fused_lr[j])
-
-            q_l = qindex(lr_hsi[i], lr_hsi[j])
-
-            diff.append(abs(q_f - q_l) ** p)
-
-    diff = np.array(diff)
-
-    return (diff.mean()) ** (1 / p)
+    num = 0
+    sum_sam = 0
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    for x in range(x_true.shape[0]):
+        for y in range(x_true.shape[1]):
+            tmp_pred = x_pred[x, y].ravel()
+            tmp_true = x_true[x, y].ravel()
+            if np.linalg.norm(tmp_true) != 0 and np.linalg.norm(tmp_pred) != 0:
+                sum_sam += np.arccos(
+                    np.inner(tmp_pred, tmp_true) / (np.linalg.norm(tmp_true) * np.linalg.norm(tmp_pred)))
+                num += 1
+    sam_deg = (sum_sam / num) * 180 / np.pi
+    return sam_deg
 
 
-########################################################
-# D_s
-########################################################
-def D_s(fused, lr_hsi, pan, scale, q=1):
+def compare_corr(x_true, x_pred):
     """
-    fused : (C,H,W)
-    lr_hsi: (C,h,w)
-    pan : (H,W)
+    Calculate the cross correlation between x_pred and x_true.
+    求对应波段的相关系数，然后取均值
+    CC is a spatial measure.
     """
-
-    pan_lr = mtf_downsample(pan, scale)
-
-    diff = []
-
-    for i in range(fused.shape[0]):
-
-        q_hr = qindex(fused[i], pan)
-
-        q_lr = qindex(lr_hsi[i], pan_lr)
-
-        diff.append(abs(q_hr - q_lr) ** q)
-
-    diff = np.array(diff)
-
-    return (diff.mean()) ** (1 / q)
+    x_true, x_pred = img_2d_mat(x_true=x_true, x_pred=x_pred)
+    x_true = x_true - np.mean(x_true, axis=1).reshape(-1, 1)
+    x_pred = x_pred - np.mean(x_pred, axis=1).reshape(-1, 1)
+    numerator = np.sum(x_true * x_pred, axis=1).reshape(-1, 1)
+    denominator = np.sqrt(np.sum(x_true * x_true, axis=1) * np.sum(x_pred * x_pred, axis=1)).reshape(-1, 1)
+    return (numerator / denominator).mean()
 
 
-########################################################
-# QNR
-########################################################
-def QNR(
-        fused,
-        lr_hsi,
-        pan,
-        scale,
-        alpha=1,
-        beta=1):
-
-    dl = D_lambda(fused, lr_hsi, scale)
-
-    ds = D_s(fused, lr_hsi, pan, scale)
-
-    return (1 - dl) ** alpha * (1 - ds) ** beta
-
-
-########################################################
-# SCC
-########################################################
-# def SCC(fused, pan):
-#     """
-#     fused : (C,H,W)
-#     pan : (H,W)
-#     """
-
-#     gx_pan = cv2.Sobel(pan, cv2.CV_64F, 1, 0, 3)
-#     gy_pan = cv2.Sobel(pan, cv2.CV_64F, 0, 1, 3)
-
-#     pan_grad = np.sqrt(gx_pan ** 2 + gy_pan ** 2)
-
-#     cc = []
-
-#     for band in fused:
-
-#         gx = cv2.Sobel(band, cv2.CV_64F, 1, 0, 3)
-#         gy = cv2.Sobel(band, cv2.CV_64F, 0, 1, 3)
-
-#         grad = np.sqrt(gx ** 2 + gy ** 2)
-
-#         cc.append(np.corrcoef(
-#             grad.ravel(),
-#             pan_grad.ravel()
-#         )[0, 1])
-
-#     return np.mean(cc)
-
-def SCC(fused, pan):
+def img_2d_mat(x_true, x_pred):
     """
-    Spatial Correlation Coefficient (SCC)
+    # 将三维的多光谱图像转为2位矩阵
+    :param x_true: (H, W, C)
+    :param x_pred: (H, W, C)
+    :return: a matrix which shape is (C, H * W)
+    """
+    h, w, c = x_true.shape
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    x_mat = np.zeros((c, h * w), dtype=np.float32)
+    y_mat = np.zeros((c, h * w), dtype=np.float32)
+    for i in range(c):
+        x_mat[i] = x_true[:, :, i].reshape((1, -1))
+        y_mat[i] = x_pred[:, :, i].reshape((1, -1))
+    return x_mat, y_mat
 
-    Parameters
-    ----------
-    fused : ndarray
-        (C,H,W)
-    pan : ndarray
-        (H,W) or (1,H,W)
 
-    Returns
-    -------
-    float
+def compare_rmse(x_true, x_pred):
+    """
+    Calculate Root mean squared error
+    :param x_true:
+    :param x_pred:
+    :return:
+    """
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    return np.linalg.norm(x_true - x_pred) / (np.sqrt(x_true.shape[0] * x_true.shape[1] * x_true.shape[2]))
+
+
+def compare_mpsnr(x_true, x_pred, data_range):
+    """
+    :param x_true: Input image must have three dimension (H, W, C)
+    :param x_pred:
+    :return:
+    """
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    channels = x_true.shape[2]
+    total_psnr = [compare_psnr(im_true=x_true[:, :, k], im_test=x_pred[:, :, k], data_range=data_range)
+                  for k in range(channels)]
+
+    return np.mean(total_psnr)
+
+
+def compare_mssim(x_true, x_pred, data_range, multidimension):
     """
 
-    if pan.ndim == 3:
-        pan = pan.squeeze(0)
-
-    fused = fused.astype(np.float64)
-    pan = pan.astype(np.float64)
-
-    # ----------------------------
-    # HSI -> pseudo PAN
-    # ----------------------------
-    fused_pan = np.mean(fused, axis=0)
-
-    # ----------------------------
-    # Sobel gradient
-    # ----------------------------
-    gx1 = cv2.Sobel(fused_pan, cv2.CV_64F, 1, 0, ksize=3)
-    gy1 = cv2.Sobel(fused_pan, cv2.CV_64F, 0, 1, ksize=3)
-    grad1 = np.sqrt(gx1 ** 2 + gy1 ** 2)
-
-    gx2 = cv2.Sobel(pan, cv2.CV_64F, 1, 0, ksize=3)
-    gy2 = cv2.Sobel(pan, cv2.CV_64F, 0, 1, ksize=3)
-    grad2 = np.sqrt(gx2 ** 2 + gy2 ** 2)
-
-    std1 = grad1.std()
-    std2 = grad2.std()
-
-    if std1 < 1e-12 or std2 < 1e-12:
-        return 0.0
-
-    return float(np.corrcoef(
-        grad1.ravel(),
-        grad2.ravel()
-    )[0, 1])
-
-def to_numpy(x):
-    x = x.detach().cpu().numpy()
-
-    while x.ndim > 3:
-        x = np.squeeze(x, axis=0)
-
-    return x
-def evaluate_batch(fused, lr_hsi, pan):
+    :param x_true:
+    :param x_pred:
+    :param data_range:
+    :param multidimension:
+    :return:
     """
-    fused  : (B,C,H,W)
-    lr_hsi : (B,C,h,w)
-    pan    : (B,1,H,W)
+    mssim = [compare_ssim(X=x_true[:, :, i], Y=x_pred[:, :, i], data_range=data_range, multidimension=multidimension)
+            for i in range(x_true.shape[2])]
 
-    Returns
-    -------
-    dict
+    return np.mean(mssim)
+
+
+def compare_sid(x_true, x_pred):
+    """
+    SID is an information theoretic measure for spectral similarity and discriminability.
+    :param x_true:
+    :param x_pred:
+    :return:
+    """
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    N = x_true.shape[2]
+    err = np.zeros(N)
+    for i in range(N):
+        err[i] = abs(np.sum(x_pred[:, :, i] * np.log10((x_pred[:, :, i] + 1e-3) / (x_true[:, :, i] + 1e-3))) +
+                     np.sum(x_true[:, :, i] * np.log10((x_true[:, :, i] + 1e-3) / (x_pred[:, :, i] + 1e-3))))
+    return np.mean(err / (x_true.shape[1] * x_true.shape[0]))
+
+
+def compare_appsa(x_true, x_pred):
     """
 
- 
-
-    B = fused.shape[0]
-
-    scale = fused.shape[2] // lr_hsi.shape[2]
-
-    metrics = {
-        "D_lambda": [],
-        "D_s": [],
-        "QNR": [],
-        "SCC": []
-    }
-
-    for i in range(B):
-
-        f = fused[i]
-
-        l = lr_hsi[i]
-
-        p = pan[i, 0]
-
-
-    
-
-        metrics["D_lambda"].append(
-            D_lambda(f, l, scale)
-        )
-
-        metrics["D_s"].append(
-            D_s(f, l, p, scale)
-        )
-
-        metrics["QNR"].append(
-            QNR(f, l, p, scale)
-        )
-
-        metrics["SCC"].append(
-            SCC(f, p)
-        )
-
-    for k in metrics:
-
-        metrics[k] = float(np.mean(metrics[k]))
-
-    return metrics
-def center_crop(img, target_h, target_w):
+    :param x_true:
+    :param x_pred:
+    :return:
     """
-    img: (N, H, W, C)
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    nom = np.sum(x_true * x_pred, axis=2)
+    denom = np.linalg.norm(x_true, axis=2) * np.linalg.norm(x_pred, axis=2)
+
+    cos = np.where((nom / (denom + 1e-3)) > 1, 1, (nom / (denom + 1e-3)))
+    appsa = np.arccos(cos)
+    return np.sum(appsa) / (x_true.shape[1] * x_true.shape[0])
+
+
+def compare_mare(x_true, x_pred):
     """
-    H, W = img.shape[1], img.shape[2]
-    top = (H - target_h) // 2
-    left = (W - target_w) // 2
-    return img[:, top:top+target_h, left:left+target_w, :]
+
+    :param x_true:
+    :param x_pred:
+    :return:
+    """
+    x_true, x_pred = x_true.astype(np.float32), x_pred.astype(np.float32)
+    diff = x_true - x_pred
+    abs_diff = np.abs(diff)
+    relative_abs_diff = np.divide(abs_diff, x_true + 1)  # added epsilon to avoid division by zero.
+    return np.mean(relative_abs_diff)
+
+
+def img_qi(img1, img2, block_size=8):
+    N = block_size ** 2
+    sum2_filter = np.ones((block_size, block_size))
+
+    img1_sq = img1 * img1
+    img2_sq = img2 * img2
+    img12 = img1 * img2
+
+    img1_sum = convolve2d(img1, np.rot90(sum2_filter), mode='valid')
+    img2_sum = convolve2d(img2, np.rot90(sum2_filter), mode='valid')
+    img1_sq_sum = convolve2d(img1_sq, np.rot90(sum2_filter), mode='valid')
+    img2_sq_sum = convolve2d(img2_sq, np.rot90(sum2_filter), mode='valid')
+    img12_sum = convolve2d(img12, np.rot90(sum2_filter), mode='valid')
+
+    img12_sum_mul = img1_sum * img2_sum
+    img12_sq_sum_mul = img1_sum * img1_sum + img2_sum * img2_sum
+    numerator = 4 * (N * img12_sum - img12_sum_mul) * img12_sum_mul
+    denominator1 = N * (img1_sq_sum + img2_sq_sum) - img12_sq_sum_mul
+    denominator = denominator1 * img12_sq_sum_mul
+    quality_map = np.ones(denominator.shape)
+    index = (denominator1 == 0) & (img12_sq_sum_mul != 0)
+    quality_map[index] = 2 * img12_sum_mul[index] / img12_sq_sum_mul[index]
+    index = (denominator != 0)
+    quality_map[index] = numerator[index] / denominator[index]
+    return quality_map.mean()
+
+
+def compare_qave(x_true, x_pred, block_size=8):
+    n_bands = x_true.shape[2]
+    q_orig = np.zeros(n_bands)
+    for idim in range(n_bands):
+        q_orig[idim] = img_qi(x_true[:, :, idim], x_pred[:, :, idim], block_size)
+    return q_orig.mean()
+
+
+def quality_assessment(x_true, x_pred, data_range, ratio, multi_dimension=False, block_size=8):
+    """
+
+    :param multi_dimension:
+    :param ratio:
+    :param data_range:
+    :param x_true:
+    :param x_pred:
+    :param block_size
+    :return:
+    """
+    result = {'MPSNR': compare_mpsnr(x_true=x_true, x_pred=x_pred, data_range=data_range),
+              'MSSIM': compare_mssim(x_true=x_true, x_pred=x_pred, data_range=data_range,
+                                     multidimension=multi_dimension),
+              'ERGAS': compare_ergas(x_true=x_true, x_pred=x_pred, ratio=ratio),
+              'SAM': compare_sam(x_true=x_true, x_pred=x_pred),
+              # 'SID': compare_sid(x_true=x_true, x_pred=x_pred),
+              'CrossCorrelation': compare_corr(x_true=x_true, x_pred=x_pred),
+              'RMSE': compare_rmse(x_true=x_true, x_pred=x_pred),
+              # 'APPSA': compare_appsa(x_true=x_true, x_pred=x_pred),
+              # 'MARE': compare_mare(x_true=x_true, x_pred=x_pred),
+              # "QAVE": compare_qave(x_true=x_true, x_pred=x_pred, block_size=block_size)
+              }
+    return result
+
+# from scipy import io as sio
+# im_out = np.array(sio.loadmat('/home/zhwzhong/PycharmProject/HyperSR/SOAT/HyperSR/SRindices/Chikuse_EDSRViDeCNN_Blocks=9_Feats=256_Loss_H_Real_1_1_X2X2_N5new_BS32_Epo60_epoch_60_Fri_Sep_20_21:38:44_2019.mat')['output'])
+# im_gt = np.array(sio.loadmat('/home/zhwzhong/PycharmProject/HyperSR/SOAT/HyperSR/SRindices/Chikusei_test.mat')['gt'])
+#
+# sum_rmse, sum_sam, sum_psnr, sum_ssim, sum_ergas = [], [], [], [], []
+# for i in range(im_gt.shape[0]):
+#     print(im_out[i].shape)
+#     score = quality_assessment(x_pred=im_out[i], x_true=im_gt[i], data_range=1, ratio=4, multi_dimension=False, block_size=8)
+#     sum_rmse.append(score['RMSE'])
+#     sum_psnr.append(score['MPSNR'])
+#     sum_ssim.append(score['MSSIM'])
+#     sum_sam.append(score['SAM'])
+#     sum_ergas.append(score['ERGAS'])
+#
+# print(np.mean(sum_rmse), np.mean(sum_psnr), np.mean(sum_ssim), np.mean(sum_sam))
 if __name__ == '__main__':
-    import numpy as np
     import scipy.io as sio
-    ###################################################
-    # Example
-    ###################################################
-    # fused = sio.loadmat("/home/s-zhangbd/code/SSRnet_hmp/out/ssr_real_new_best.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/HSRnet/out/hsr_real_new_psnr.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/SCPNet_hmp/out/scp_real_new.mat")['output']
-    # fused = sio.loadmat("./hyper_real9_1_new.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/HMPNet-master/fusion_tests/hmp_real_new_new_1.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/DSP_hmp/out/dsp_real_best_new.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/PSRT-main/result/hmp_real/psrt_real_best_new.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/3DT-Net_hmp/out/3dt_hmp_real_new.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/PMI-RFCoNet-main/result_hmp/PMI_real_new.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/MIMO-SST_hmp/out/MIMO_hmp_real__new_best.mat")['output']
-    # fused = sio.loadmat("/home/s-zhangbd/code/DPFformer_hmp/Result_hmp/dpf_real_noref.mat")['output']  # DPF
-    # fused = sio.loadmat("/home/s-zhangbd/code/DIM-HMPF-main/DIM-HMPF/Result_hmp/real_2.mat")['output']   #DIM-HMP
-    fused = sio.loadmat("/home/s-zhangbd/code/work2_ablation/out_real/ours_real_noref_psnr.mat")['output'] # Ours
 
+    im_gt = sio.loadmat(r"../wangstondc/data/test_gt.mat")['gt'] # DC
+    # print(im_gt.shape) # (2, 304, 304, 191)
 
-    lr_hsi = sio.loadmat("./test_data_noref_small.mat")['hsi']
-    pan = sio.loadmat("./test_data_noref_small.mat")['pan']
+    # im_out = sio.loadmat(r"H:\work2\结果\Hyper\hyper2\hyper_DC_304.mat")['output']  # hypernet new
+    # im_out = sio.loadmat(r"H:\work2\结果\Ours_dc\new_model8_13_dc_1.mat")['output']
+    # im_out = sio.loadmat(r"H:\work2\结果\HMPNet\WDC\out_dc_2_304_1.mat")['output'] # HMP
+    # im_out = sio.loadmat(r"H:\work2\结果\PSRT\psrt_dc_820.mat")['output'] # psrt
 
+    # im_out = sio.loadmat(r"H:\work2\结果\SSRnet\ssr_dc_best.mat")['output']  # DC ssrnet
+    # im_out = sio.loadmat(r"H:\work2\结果\Hsr\hsr_dc_best.mat")['output']  # DC hsrnet
+    # im_out = sio.loadmat(r"H:\work2\结果\DSP\dsp_dc_best.mat")['output']  # DC dspnet
+    # im_out = sio.loadmat(r"H:\work2\结果\MIMO\MIMO_hmp_dc_best.mat")['output']  # DC mimo-sst
+    # im_out = sio.loadmat(r"H:\work2\结果\3DT\3dt_hmp_dc_100.mat")['output']  # DC 3dt
 
+    # im_out = sio.loadmat(r"H:\work2\结果\PMII\result_hmp\PMI_wdc_1.mat")['output']  # PMI real
 
-    fused = fused.astype(np.float64)
-    fused /= fused.max()
+    # im_out = sio.loadmat(r"H:\work2\结果\SCPNet\out\scp_wdc.mat")['output']
+    # im_out = sio.loadmat(r"H:\work2\结果\DPFormer\wdc_1.mat")['output']
+    im_out = sio.loadmat(r"H:\work2\结果\DIM\wdc_2.mat")['output']
+    # im_out = sio.loadmat(r"H:\work2\结果\Ours_dc\m2\m2_wdc_psnr.mat")['output']
 
-    lr_hsi = lr_hsi.astype(np.float64)
-    lr_hsi /= lr_hsi.max()
+    sum_rmse, sum_sam, sum_psnr, sum_ssim, sum_ergas = [], [], [], [], []
+    for i in range(im_gt.shape[0]):
+        print(im_out[i].shape)
+        score = quality_assessment(x_pred=im_out[i], x_true=im_gt[i], data_range=1, ratio=8, multi_dimension=False, block_size=8)
+        sum_rmse.append(score['RMSE'])
+        sum_psnr.append(score['MPSNR'])
+        sum_ssim.append(score['MSSIM'])
+        sum_sam.append(score['SAM'])
+        sum_ergas.append(score['ERGAS'])
+        print("----test{}------".format(i+1))
+        print("--PSNR", score['MPSNR'])
+        print("--SAM", score['SAM'])
+        print("--RMSE", score['RMSE'])
+        print("--ERGAS", score['ERGAS'])
+        print("--SSIM", score['MSSIM'])
+    print()
+    print("=====test_AVG====")
+    print("PSNR: {:.4f}".format(np.mean(sum_psnr)))
+    print("SAM: {:.4f}".format(np.mean(sum_sam)))
+    print("RMSE: {:.4f}".format(np.mean(sum_rmse)))
+    print("ERGAS: {:.4f}".format(np.mean(sum_ergas)))
+    print("SSIM: {:.4f}".format(np.mean(sum_ssim)))
 
-    pan = pan.astype(np.float64)
-    pan /= pan.max()
-
-    fused = np.transpose(fused, (0, 3, 1, 2))
-    lr_hsi = np.transpose(lr_hsi, (0, 3, 1, 2))
-    pan = np.transpose(pan, (0, 3, 1, 2))
-
-    print(fused.shape,lr_hsi.shape,pan.shape)
-
-    metrics = evaluate_batch(
-        fused,
-        lr_hsi,
-        pan
-    )
-
-    for k, v in metrics.items():
-        print(f"{k:10s}: {v:.6f}")
-
-
+    # print(np.mean(sum_rmse), np.mean(sum_psnr), np.mean(sum_ssim), np.mean(sum_sam),np.mean(sum_ergas))
